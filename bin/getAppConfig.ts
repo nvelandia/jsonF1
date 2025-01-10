@@ -19,6 +19,7 @@ export function getAppConfig(): AppConfig {
     awsRegion: process.env.CDK_DEFAULT_REGION!,
     apiDrivers: process.env.API_DRIVERS!,
     apiPosition: process.env.API_POSITION!,
+    apiSessions: process.env.API_SESSIONS!,
   };
 
   // Validate that all required environment variables are defined

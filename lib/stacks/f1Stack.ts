@@ -5,12 +5,39 @@ import { Runtime } from 'aws-cdk-lib/aws-lambda';
 import * as path from 'path';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
+import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
+import * as iam from 'aws-cdk-lib/aws-iam';
 
 export class f1Stack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    console.log('test3: ', process.env.API_DRIVERS);
+    // Dynamo ---------------------------
+    const raceTable = new dynamodb.Table(this, 'F1RacesTable', {
+      partitionKey: {
+        name: 'F1RacesTable',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY, // Solo para entornos de desarrollo
+    });
+
+    // Lambdas ---------------------------
+
+    const getRacesF1 = new NodejsFunction(this, 'getRacesF1', {
+      runtime: Runtime.NODEJS_18_X,
+      handler: 'handler',
+      entry: path.join(__dirname, '..', 'lambdas/getRacesF1.ts'),
+      environment: {
+        API_SESSIONS: process.env.API_SESSIONS || '',
+        TABLE_NAME: raceTable.tableName,
+      },
+    });
+
+    raceTable.grantReadWriteData(getRacesF1);
 
     const openF1Lambda = new NodejsFunction(this, 'getDataOpenF1', {
       runtime: Runtime.NODEJS_18_X,
@@ -22,10 +49,80 @@ export class f1Stack extends cdk.Stack {
       },
     });
 
-    const rule = new events.Rule(this, 'LambdaEveryMinute', {
-      schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
+    const controlLambda = new NodejsFunction(this, 'ControlLambda', {
+      runtime: Runtime.NODEJS_18_X,
+      handler: 'handler',
+      entry: path.join(__dirname, '..', 'lambdas/controlLambda.ts'),
+      environment: {
+        RULE_NAME: 'CloudWatchEveryMinuteRule',
+      },
     });
 
-    rule.addTarget(new targets.LambdaFunction(openF1Lambda));
+    // Cloudwatch ---------------------------
+
+    const cronRaces = new events.Rule(this, 'CloudWatchEveryDayRule', {
+      schedule: events.Schedule.rate(cdk.Duration.hours(48)),
+    });
+    cronRaces.addTarget(new targets.LambdaFunction(getRacesF1));
+
+    const cronPositions = new events.Rule(this, 'CloudWatchEveryMinuteRule', {
+      schedule: events.Schedule.rate(cdk.Duration.minutes(1)),
+    });
+    cronPositions.addTarget(new targets.LambdaFunction(openF1Lambda));
+
+    // Permitir que la Lambda de control administre la regla de CloudWatch
+    const cloudWatchPolicy = new iam.PolicyStatement({
+      actions: [
+        'events:EnableRule',
+        'events:DisableRule',
+        'events:DescribeRule',
+      ],
+      resources: [cronPositions.ruleArn],
+    });
+
+    controlLambda.addToRolePolicy(cloudWatchPolicy);
+
+    // Step Functions ----------
+
+    // Step 1
+    const waitTime1 = new sfn.Wait(this, 'Wait 1 hour before race', {
+      time: sfn.WaitTime.timestampPath('$.waitTime1'),
+    });
+    // Step 2
+    const activeTask = new tasks.LambdaInvoke(this, 'Invoke oneLambda', {
+      lambdaFunction: openF1Lambda,
+      outputPath: '$.Payload',
+    });
+    // Step 3
+    const waitTime2 = new sfn.Wait(this, 'Wait 1 hour after race', {
+      time: sfn.WaitTime.timestampPath('$.waitTime2'),
+    });
+    // Step 4
+    const desactiveTask = new tasks.LambdaInvoke(this, 'Invoke oneLambda', {
+      lambdaFunction: openF1Lambda,
+      outputPath: '$.Payload',
+    });
+
+    const definition = waitTime1 // esperar el dia de la carrera
+      .next(activeTask) // activar cloudwatch de un minuto
+      .next(waitTime2) // Una hora despues del final de la carrera
+      .next(desactiveTask); // Desactivar  cloudwatch de un minuto
+
+    const stepFunction = new sfn.StateMachine(this, 'StepFunction', {
+      definition,
+      timeout: cdk.Duration.days(365),
+    });
+
+    // Permisos para que la lambda listenBucket dispare la Step Function
+    stepFunction.grantStartExecution(getRacesF1);
   }
 }
+
+// Cron cloudwatch cada 48 horas
+// Lambda meetings
+// Seteo un array? con las carreras que hay y crea un step fuction que se dispare el dia de la qualifying/sprint/race
+// el step fucntion en el dia de la carrera se activa una hora antes y dispara el cron cloudwatch cada 1 min
+// se apaga una hora despues de la hora de finalizado
+
+// step fuction de cada minuto dispara la lambda getDataOpen con las posiciones
+// las guarda en un json en un S3

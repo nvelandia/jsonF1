@@ -10,6 +10,8 @@ export const handler = async (event: any, context: any) => {
     const top20 = getTop20(allPositions);
     const positions = mergeDriverData(top20, allDrivers);
     console.log('positions', positions);
+
+    // Guardar en un json en un S3
   } catch (error) {
     console.error(error);
   }

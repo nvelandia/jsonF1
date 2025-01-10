@@ -22,3 +22,21 @@ export interface iPosition {
 }
 
 export type MergedData = iPosition & iDriver;
+export type ISessions = ISession[];
+
+export interface ISession {
+  location: string;
+  country_key: number;
+  country_code: string;
+  country_name: string;
+  circuit_key: number;
+  circuit_short_name: string;
+  session_type: string;
+  session_name: string;
+  date_start: Date;
+  date_end: Date;
+  gmt_offset: string;
+  session_key: number;
+  meeting_key: number;
+  year: number;
+}
