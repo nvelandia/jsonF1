@@ -6,7 +6,6 @@ import * as path from 'path';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
-import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -46,6 +45,8 @@ export class f1Stack extends cdk.Stack {
       environment: {
         API_DRIVERS: process.env.API_DRIVERS || '',
         API_POSITION: process.env.API_POSITION || '',
+        API_SESSIONS: process.env.API_SESSIONS || '',
+        BUCKET_NAME: process.env.BUCKET_NAME || '',
       },
     });
 
@@ -61,7 +62,7 @@ export class f1Stack extends cdk.Stack {
     // Cloudwatch ---------------------------
 
     const cronRaces = new events.Rule(this, 'CloudWatchEveryDayRule', {
-      schedule: events.Schedule.rate(cdk.Duration.hours(48)),
+      schedule: events.Schedule.rate(cdk.Duration.days(6)),
     });
     cronRaces.addTarget(new targets.LambdaFunction(getRacesF1));
 
@@ -85,21 +86,21 @@ export class f1Stack extends cdk.Stack {
     // Step Functions ----------
 
     // Step 1
-    const waitTime1 = new sfn.Wait(this, 'Wait 1 hour before race', {
+    const waitTime1 = new sfn.Wait(this, 'Wait 3 hour before race', {
       time: sfn.WaitTime.timestampPath('$.waitTime1'),
     });
     // Step 2
-    const activeTask = new tasks.LambdaInvoke(this, 'Invoke oneLambda', {
-      lambdaFunction: openF1Lambda,
+    const activeTask = new tasks.LambdaInvoke(this, 'activeTask', {
+      lambdaFunction: controlLambda,
       outputPath: '$.Payload',
     });
     // Step 3
-    const waitTime2 = new sfn.Wait(this, 'Wait 1 hour after race', {
+    const waitTime2 = new sfn.Wait(this, 'Wait 3 hour after race', {
       time: sfn.WaitTime.timestampPath('$.waitTime2'),
     });
     // Step 4
-    const desactiveTask = new tasks.LambdaInvoke(this, 'Invoke oneLambda', {
-      lambdaFunction: openF1Lambda,
+    const desactiveTask = new tasks.LambdaInvoke(this, 'desactiveTask', {
+      lambdaFunction: controlLambda,
       outputPath: '$.Payload',
     });
 
@@ -118,9 +119,12 @@ export class f1Stack extends cdk.Stack {
   }
 }
 
-// Cron cloudwatch cada 48 horas
-// Lambda meetings
-// Seteo un array? con las carreras que hay y crea un step fuction que se dispare el dia de la qualifying/sprint/race
+// Cron cloudwatch cada 48 horas / 7 dias
+
+// Lambda sessions
+
+// Crea el step function de cada carrera y registra en Dynamo.
+// Step function se dispará el dia de la qualifying/sprint/race
 // el step fucntion en el dia de la carrera se activa una hora antes y dispara el cron cloudwatch cada 1 min
 // se apaga una hora despues de la hora de finalizado
 

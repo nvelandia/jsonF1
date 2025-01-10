@@ -1,15 +1,35 @@
 import * as dotenv from 'dotenv';
 import { iDriver, iPosition, MergedData } from '../utils/interface';
+import * as AWS from 'aws-sdk';
+const s3 = new AWS.S3();
 dotenv.config();
 
 export const handler = async (event: any, context: any) => {
   try {
+    const allSessions = await getDataOpenF1(process.env.API_SESSIONS!);
+    // sessions buscar por session_key
+    // Verificar si la fecha de inicio pasada por parametros coincide con la fecha de inicio de la api
+
     const allDrivers = await getDataOpenF1(process.env.API_DRIVERS!);
     const allPositions = await getDataOpenF1(process.env.API_POSITION!);
 
     const top20 = getTop20(allPositions);
     const positions = mergeDriverData(top20, allDrivers);
     console.log('positions', positions);
+
+    // Convierte el array a un JSON string
+    const jsonContent = JSON.stringify(positions);
+
+    // Define los parámetros para el S3
+    const params = {
+      Bucket: process.env.BUCKET_NAME,
+      Key: 'positions.json', // Nombre del archivo
+      Body: jsonContent,
+      ContentType: 'application/json',
+    };
+
+    await s3.putObject(params).promise();
+    console.log('Archivo JSON cargado exitosamente');
 
     // Guardar en un json en un S3
   } catch (error) {

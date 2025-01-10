@@ -1,6 +1,8 @@
 import * as dotenv from 'dotenv';
 import { ISession, ISessions } from '../utils/interface';
-const AWS = require('aws-sdk');
+import * as AWS from 'aws-sdk';
+import fetch from 'node-fetch';
+
 const stepfunctions = new AWS.StepFunctions();
 const dynamodb = new AWS.DynamoDB.DocumentClient();
 const currentYear = new Date().getFullYear();
@@ -10,9 +12,9 @@ dotenv.config();
 export const handler = async (event: any, context: any) => {
   try {
     const allSessions = await getDataOpenF1(process.env.API_SESSIONS!);
-    const races = getRaces(allSessions);
+    const races = getRaces(allSessions as ISessions);
+    console.log('Races:', races);
     createMachines(races);
-    console.log(races);
   } catch (error) {
     console.error(error);
   }
@@ -27,34 +29,37 @@ const getDataOpenF1 = async (url: string) => {
 const getRaces = (sessions: ISessions) => {
   const races = sessions.filter(
     (session: ISession) =>
-      session.session_type.toLowerCase() === 'race' && session.year === 2024
+      session.session_name.toLowerCase() === 'race' && session.year === 2024
   );
 
   return races;
 };
 
-const createMachines = async (races) => {
+const createMachines = async (races: any) => {
   const results = [];
 
   for (const race of races) {
-    const meetingKey = race.meeting_key;
+    const session_key = race.session_key;
 
     try {
       // Consulta en DynamoDB
-      const existingRace = await getRaceFromDynamoDB(meetingKey);
+      const existingRace = await getRaceFromDynamoDB(session_key);
       // Una consulta a dynamo por cada carrera?
 
+      // Año
+      // comparar con js
+
       if (existingRace) {
-        console.log(`Step Function ya existe para la carrera: ${meetingKey}`);
-        results.push({ meeting_key: meetingKey, status: 'exists' });
+        console.log(`Step Function ya existe para la carrera: ${session_key}`);
+        results.push({ session_key: session_key, status: 'exists' });
         continue; // Salta la creación
       }
 
       const params = {
         stateMachineArn: process.env.STEP_FUNCTION_ARN,
-        name: `Race-${currentYear}-${meetingKey}`,
+        name: `Race-${currentYear}-${session_key}`,
         input: JSON.stringify({
-          meetingKey: meetingKey,
+          session_key: session_key,
           match_start: race.date_start,
           waitTime1: calculateWaitTimes(race.date_start, true),
           waitTime2: calculateWaitTimes(race.date_end, false),
@@ -66,49 +71,56 @@ const createMachines = async (races) => {
       console.log('Ejecución de Step Function iniciada:', data);
 
       // Registrar en DynamoDB
-      await saveRaceToDynamoDB(meetingKey, data.stateMachineArn, race);
+      await saveRaceToDynamoDB(session_key, data.stateMachineArn, race);
 
-      console.log(`Step Function creada para la carrera: ${meetingKey}`);
-      results.push({ meeting_key: meetingKey, status: 'created' });
+      console.log(`Step Function creada para la carrera: ${session_key}`);
+      results.push({ session_key: session_key, status: 'created' });
     } catch (error) {
-      console.error(`Error procesando la carrera ${meetingKey}:`, error);
-      results.push({ meeting_key: meetingKey, status: 'error', error });
+      console.error(`Error procesando la carrera ${session_key}:`, error);
+      results.push({ session_key: session_key, status: 'error', error });
     }
   }
 
   return { statusCode: 200, body: JSON.stringify(results) };
 };
 
-async function getRaceFromDynamoDB(meetingKey) {
+async function getRaceFromDynamoDB(session_key: any) {
   const params = {
     TableName: 'F1Races',
-    Key: { meeting_key: meetingKey },
+    Key: { session_key: session_key },
   };
   const result = await dynamodb.get(params).promise();
   return result.Item;
 }
 
-async function saveRaceToDynamoDB(meetingKey, stateMachineArn, race) {
+async function saveRaceToDynamoDB(
+  session_key: any,
+  stateMachineArn: any,
+  race: any
+) {
   const params = {
     TableName: 'F1Races',
     Item: {
-      meeting_key: meetingKey,
+      session_key: session_key,
       step_function_arn: stateMachineArn,
       date: race.date_start, // Fecha de la carrera
-      location: race.location,
+      year: race.year,
     },
   };
   await dynamodb.put(params).promise();
 }
 
-function calculateWaitTimes(date: string, init: boolean) {
-  const localDate = new Date(date.replace(' ', 'T') + '-03:00');
+export function calculateWaitTimes(date: string, subtract: boolean): string {
+  const originalDate = new Date(date);
 
-  if (init) {
-    localDate.setHours(localDate.getHours() - 1);
-  } else {
-    localDate.setHours(localDate.getHours() + 1);
+  // Verificar si la fecha es válida
+  if (isNaN(originalDate.getTime())) {
+    throw new Error('Fecha inválida');
   }
 
-  return localDate.toISOString();
+  const adjustedDate = new Date(
+    originalDate.getTime() + (subtract ? -3 : 3) * 60 * 60 * 1000
+  );
+
+  return adjustedDate.toISOString();
 }

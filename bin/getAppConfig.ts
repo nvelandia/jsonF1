@@ -20,6 +20,7 @@ export function getAppConfig(): AppConfig {
     apiDrivers: process.env.API_DRIVERS!,
     apiPosition: process.env.API_POSITION!,
     apiSessions: process.env.API_SESSIONS!,
+    bucketName: process.env.BUCKET_NAME!,
   };
 
   // Validate that all required environment variables are defined

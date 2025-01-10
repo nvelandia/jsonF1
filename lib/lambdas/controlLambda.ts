@@ -5,7 +5,7 @@ import { iDriver, iPosition, MergedData } from '../utils/interface';
 dotenv.config();
 
 export const handler = async (event) => {
-  const ruleName = process.env.RULE_NAME; // Nombre de la regla desde variables de entorno
+  const ruleName = event.RULE_NAME; // Nombre de la regla desde variables de entorno
   const action = event.action; // Espera 'enable' o 'disable'
 
   if (!ruleName || !action) {
