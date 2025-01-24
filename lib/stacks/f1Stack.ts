@@ -9,6 +9,7 @@ import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 
 export class f1Stack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -66,7 +67,11 @@ export class f1Stack extends cdk.Stack {
 
     // Permitir que la Lambda de co
     const cloudwatchPolicy = new iam.PolicyStatement({
-      actions: ['cloudwatchevents:EnableRule', 'cloudwatchevents:DisableRule'],
+      actions: [
+        'events:EnableRule',
+        'events:DisableRule',
+        'events:DescribeRule',
+      ],
       resources: ['*'],
     });
 
@@ -129,6 +134,23 @@ export class f1Stack extends cdk.Stack {
 
     // Permisos para que la lambda listenBucket dispare la Step Function
     stepFunction.grantStartExecution(getRacesF1);
+
+    const bucket = s3.Bucket.fromBucketName(
+      this,
+      'DataBucket',
+      process.env.BUCKET_NAME || ''
+    );
+
+    // Otorga permisos específicos para PutObject
+    bucket.grantWrite(openF1Lambda, 'positions.json');
+
+    // O agrega permisos manualmente
+    openF1Lambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['s3:PutObject'],
+        resources: [`${bucket.bucketArn}/positions.json`],
+      })
+    );
   }
 }
 
