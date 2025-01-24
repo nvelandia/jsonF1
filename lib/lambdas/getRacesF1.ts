@@ -6,15 +6,17 @@ import fetch from 'node-fetch';
 const stepfunctions = new AWS.StepFunctions();
 const dynamodb = new AWS.DynamoDB.DocumentClient();
 const currentYear = new Date().getFullYear();
+const f1Table = process.env.TABLE_NAME;
 
 dotenv.config();
 
 export const handler = async (event: any, context: any) => {
+  console.log('two minutes cron k');
   try {
     const allSessions = await getDataOpenF1(process.env.API_SESSIONS!);
     const races = getRaces(allSessions as ISessions);
     console.log('Races:', races);
-    createMachines(races);
+    const machines = await createMachines(races);
   } catch (error) {
     console.error(error);
   }
@@ -37,44 +39,45 @@ const getRaces = (sessions: ISessions) => {
 
 const createMachines = async (races: any) => {
   const results = [];
+  const allRaces = await getRaceFromDynamoDB(2024);
+  console.log('allRaces:', allRaces);
 
   for (const race of races) {
     const session_key = race.session_key;
 
     try {
-      // Consulta en DynamoDB
-      const existingRace = await getRaceFromDynamoDB(session_key);
-      // Una consulta a dynamo por cada carrera?
-
-      // Año
-      // comparar con js
+      const existingRace = allRaces.find(
+        (item) => item.session_key === session_key
+      );
 
       if (existingRace) {
+        console.log('existingRace');
         console.log(`Step Function ya existe para la carrera: ${session_key}`);
         results.push({ session_key: session_key, status: 'exists' });
-        continue; // Salta la creación
+      } else {
+        console.log('Dont existingRace');
+
+        const params = {
+          stateMachineArn: process.env.STATE_MACHINE_ARN,
+          name: `k-${currentYear}-${session_key}`,
+          input: JSON.stringify({
+            session_key: session_key,
+            match_start: race.date_start,
+            waitTime1: calculateWaitTimes(race.date_start, true),
+            waitTime2: calculateWaitTimes(race.date_end, false),
+          }),
+        };
+
+        // Disparar la ejecución de la Step Function
+        const data = await stepfunctions.startExecution(params).promise();
+        console.log('Ejecución de Step Function iniciada:', data);
+
+        // Registrar en DynamoDB
+        await saveRaceToDynamoDB(session_key, data.executionArn, race);
+
+        console.log(`Step Function creada para la carrera: ${session_key}`);
+        results.push({ session_key: session_key, status: 'created' });
       }
-
-      const params = {
-        stateMachineArn: process.env.STEP_FUNCTION_ARN,
-        name: `Race-${currentYear}-${session_key}`,
-        input: JSON.stringify({
-          session_key: session_key,
-          match_start: race.date_start,
-          waitTime1: calculateWaitTimes(race.date_start, true),
-          waitTime2: calculateWaitTimes(race.date_end, false),
-        }),
-      };
-
-      // Disparar la ejecución de la Step Function
-      const data = await stepfunctions.startExecution(params).promise();
-      console.log('Ejecución de Step Function iniciada:', data);
-
-      // Registrar en DynamoDB
-      await saveRaceToDynamoDB(session_key, data.stateMachineArn, race);
-
-      console.log(`Step Function creada para la carrera: ${session_key}`);
-      results.push({ session_key: session_key, status: 'created' });
     } catch (error) {
       console.error(`Error procesando la carrera ${session_key}:`, error);
       results.push({ session_key: session_key, status: 'error', error });
@@ -84,25 +87,16 @@ const createMachines = async (races: any) => {
   return { statusCode: 200, body: JSON.stringify(results) };
 };
 
-async function getRaceFromDynamoDB(session_key: any) {
-  const params = {
-    TableName: 'F1Races',
-    Key: { session_key: session_key },
-  };
-  const result = await dynamodb.get(params).promise();
-  return result.Item;
-}
-
 async function saveRaceToDynamoDB(
   session_key: any,
-  stateMachineArn: any,
+  executionArn: any,
   race: any
 ) {
   const params = {
-    TableName: 'F1Races',
+    TableName: f1Table,
     Item: {
       session_key: session_key,
-      step_function_arn: stateMachineArn,
+      step_function_arn: executionArn,
       date: race.date_start, // Fecha de la carrera
       year: race.year,
     },
@@ -123,4 +117,25 @@ export function calculateWaitTimes(date: string, subtract: boolean): string {
   );
 
   return adjustedDate.toISOString();
+}
+
+async function getRaceFromDynamoDB(currentYear: number) {
+  const params = {
+    TableName: f1Table,
+    FilterExpression: '#year = :yearValue',
+    ExpressionAttributeNames: {
+      '#year': 'year',
+    },
+    ExpressionAttributeValues: {
+      ':yearValue': currentYear,
+    },
+  };
+
+  try {
+    const data = await dynamodb.scan(params).promise();
+    return data.Items;
+  } catch (err) {
+    console.log('test:', err);
+    return err;
+  }
 }

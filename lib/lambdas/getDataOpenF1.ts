@@ -6,6 +6,8 @@ dotenv.config();
 
 export const handler = async (event: any, context: any) => {
   try {
+    console.log('minute cron');
+    return;
     const allSessions = await getDataOpenF1(process.env.API_SESSIONS!);
     // sessions buscar por session_key
     // Verificar si la fecha de inicio pasada por parametros coincide con la fecha de inicio de la api

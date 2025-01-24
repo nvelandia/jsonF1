@@ -17,8 +17,8 @@ export class f1Stack extends cdk.Stack {
     // Dynamo ---------------------------
     const raceTable = new dynamodb.Table(this, 'F1RacesTable', {
       partitionKey: {
-        name: 'F1RacesTable',
-        type: dynamodb.AttributeType.STRING,
+        name: 'session_key',
+        type: dynamodb.AttributeType.NUMBER,
       },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: cdk.RemovalPolicy.DESTROY, // Solo para entornos de desarrollo
@@ -33,6 +33,7 @@ export class f1Stack extends cdk.Stack {
       environment: {
         API_SESSIONS: process.env.API_SESSIONS || '',
         TABLE_NAME: raceTable.tableName,
+        STATE_MACHINE_ARN: process.env.STATE_MACHINE_ARN || '',
       },
     });
 
@@ -42,6 +43,7 @@ export class f1Stack extends cdk.Stack {
       runtime: Runtime.NODEJS_18_X,
       handler: 'handler',
       entry: path.join(__dirname, '..', 'lambdas/getDataOpenF1.ts'),
+      timeout: cdk.Duration.minutes(10),
       environment: {
         API_DRIVERS: process.env.API_DRIVERS || '',
         API_POSITION: process.env.API_POSITION || '',
@@ -50,19 +52,10 @@ export class f1Stack extends cdk.Stack {
       },
     });
 
-    const controlLambda = new NodejsFunction(this, 'ControlLambda', {
-      runtime: Runtime.NODEJS_18_X,
-      handler: 'handler',
-      entry: path.join(__dirname, '..', 'lambdas/controlLambda.ts'),
-      environment: {
-        RULE_NAME: 'CloudWatchEveryMinuteRule',
-      },
-    });
-
     // Cloudwatch ---------------------------
 
     const cronRaces = new events.Rule(this, 'CloudWatchEveryDayRule', {
-      schedule: events.Schedule.rate(cdk.Duration.days(6)),
+      schedule: events.Schedule.rate(cdk.Duration.minutes(2)),
     });
     cronRaces.addTarget(new targets.LambdaFunction(getRacesF1));
 
@@ -71,17 +64,23 @@ export class f1Stack extends cdk.Stack {
     });
     cronPositions.addTarget(new targets.LambdaFunction(openF1Lambda));
 
-    // Permitir que la Lambda de control administre la regla de CloudWatch
-    const cloudWatchPolicy = new iam.PolicyStatement({
-      actions: [
-        'events:EnableRule',
-        'events:DisableRule',
-        'events:DescribeRule',
-      ],
-      resources: [cronPositions.ruleArn],
+    // Permitir que la Lambda de co
+    const cloudwatchPolicy = new iam.PolicyStatement({
+      actions: ['cloudwatchevents:EnableRule', 'cloudwatchevents:DisableRule'],
+      resources: ['*'],
     });
 
-    controlLambda.addToRolePolicy(cloudWatchPolicy);
+    const controlLambda = new NodejsFunction(this, 'ControlLambda', {
+      runtime: Runtime.NODEJS_18_X,
+      handler: 'handler',
+      entry: path.join(__dirname, '..', 'lambdas/controlLambda.ts'),
+      environment: {
+        RULE_NAME: cronPositions.ruleName,
+      },
+    });
+
+    // Agrega la política a la función Lambda
+    controlLambda.addToRolePolicy(cloudwatchPolicy);
 
     // Step Functions ----------
 
@@ -92,6 +91,13 @@ export class f1Stack extends cdk.Stack {
     // Step 2
     const activeTask = new tasks.LambdaInvoke(this, 'activeTask', {
       lambdaFunction: controlLambda,
+      payload: sfn.TaskInput.fromObject({
+        action: 'enable',
+        session_key: sfn.JsonPath.stringAt('$.session_key'),
+        match_start: sfn.JsonPath.stringAt('$.match_start'),
+        waitTime1: sfn.JsonPath.stringAt('$.waitTime1'),
+        waitTime2: sfn.JsonPath.stringAt('$.waitTime2'),
+      }),
       outputPath: '$.Payload',
     });
     // Step 3
@@ -101,6 +107,13 @@ export class f1Stack extends cdk.Stack {
     // Step 4
     const desactiveTask = new tasks.LambdaInvoke(this, 'desactiveTask', {
       lambdaFunction: controlLambda,
+      payload: sfn.TaskInput.fromObject({
+        action: 'disable',
+        session_key: sfn.JsonPath.stringAt('$.session_key'),
+        match_start: sfn.JsonPath.stringAt('$.match_start'),
+        waitTime1: sfn.JsonPath.stringAt('$.waitTime1'),
+        waitTime2: sfn.JsonPath.stringAt('$.waitTime2'),
+      }),
       outputPath: '$.Payload',
     });
 
@@ -109,7 +122,7 @@ export class f1Stack extends cdk.Stack {
       .next(waitTime2) // Una hora despues del final de la carrera
       .next(desactiveTask); // Desactivar  cloudwatch de un minuto
 
-    const stepFunction = new sfn.StateMachine(this, 'StepFunction', {
+    const stepFunction = new sfn.StateMachine(this, 'racesF1', {
       definition,
       timeout: cdk.Duration.days(365),
     });
