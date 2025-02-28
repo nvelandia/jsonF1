@@ -16,7 +16,8 @@ export class f1Stack extends cdk.Stack {
     super(scope, id, props);
 
     // Dynamo ---------------------------
-    const raceTable = new dynamodb.Table(this, 'F1RacesTable', {
+    const sessionsRacesTable = new dynamodb.Table(this, 'F1RacesTable', {
+      tableName: process.env.TABLE_NAME || '',
       partitionKey: {
         name: 'session_key',
         type: dynamodb.AttributeType.NUMBER,
@@ -28,19 +29,21 @@ export class f1Stack extends cdk.Stack {
     // Lambdas ---------------------------
 
     const getRacesF1 = new NodejsFunction(this, 'getRacesF1', {
+      functionName: 'f1-getRacesF1',
       runtime: Runtime.NODEJS_18_X,
       handler: 'handler',
       entry: path.join(__dirname, '..', 'lambdas/getRacesF1.ts'),
       environment: {
         API_SESSIONS: process.env.API_SESSIONS || '',
-        TABLE_NAME: raceTable.tableName,
+        TABLE_NAME: sessionsRacesTable.tableName,
         STATE_MACHINE_ARN: process.env.STATE_MACHINE_ARN || '',
       },
     });
 
-    raceTable.grantReadWriteData(getRacesF1);
+    sessionsRacesTable.grantReadWriteData(getRacesF1);
 
-    const openF1Lambda = new NodejsFunction(this, 'getDataOpenF1', {
+    const mamF1 = new NodejsFunction(this, 'getDataOpenF1', {
+      functionName: 'f1-mamF1',
       runtime: Runtime.NODEJS_18_X,
       handler: 'handler',
       entry: path.join(__dirname, '..', 'lambdas/getDataOpenF1.ts'),
@@ -56,14 +59,14 @@ export class f1Stack extends cdk.Stack {
     // Cloudwatch ---------------------------
 
     const cronRaces = new events.Rule(this, 'CloudWatchEveryDayRule', {
-      schedule: events.Schedule.rate(cdk.Duration.minutes(2)),
+      schedule: events.Schedule.rate(cdk.Duration.days(7)),
     });
     cronRaces.addTarget(new targets.LambdaFunction(getRacesF1));
 
     const cronPositions = new events.Rule(this, 'CloudWatchEveryMinuteRule', {
       schedule: events.Schedule.rate(cdk.Duration.minutes(1)),
     });
-    cronPositions.addTarget(new targets.LambdaFunction(openF1Lambda));
+    cronPositions.addTarget(new targets.LambdaFunction(mamF1));
 
     // Permitir que la Lambda de co
     const cloudwatchPolicy = new iam.PolicyStatement({
@@ -76,6 +79,7 @@ export class f1Stack extends cdk.Stack {
     });
 
     const controlLambda = new NodejsFunction(this, 'ControlLambda', {
+      functionName: 'f1-controlLambda',
       runtime: Runtime.NODEJS_18_X,
       handler: 'handler',
       entry: path.join(__dirname, '..', 'lambdas/controlLambda.ts'),
@@ -128,27 +132,34 @@ export class f1Stack extends cdk.Stack {
       .next(desactiveTask); // Desactivar  cloudwatch de un minuto
 
     const stepFunction = new sfn.StateMachine(this, 'racesF1', {
+      stateMachineName: 'f1-sessions',
       definition,
       timeout: cdk.Duration.days(365),
     });
 
-    // Permisos para que la lambda listenBucket dispare la Step Function
     stepFunction.grantStartExecution(getRacesF1);
 
-    const bucket = s3.Bucket.fromBucketName(
-      this,
-      'DataBucket',
-      process.env.BUCKET_NAME || ''
-    );
+    const bucketName = process.env.BUCKET_NAME || '';
 
-    // Otorga permisos específicos para PutObject
-    bucket.grantWrite(openF1Lambda, 'positions.json');
+    const bucket = s3.Bucket.fromBucketName(this, 'DataBucket', bucketName);
 
-    // O agrega permisos manualmente
-    openF1Lambda.addToRolePolicy(
+    bucket.grantWrite(mamF1);
+
+    mamF1.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['s3:PutObject'],
-        resources: [`${bucket.bucketArn}/positions.json`],
+        resources: [`${bucket.bucketArn}/*`],
+        effect: iam.Effect.ALLOW,
+      })
+    );
+
+    getRacesF1.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['states:StopExecution'],
+        resources: [
+          'arn:aws:states:us-east-1:295402955636:stateMachine:f1-sessions:*',
+        ],
+        effect: iam.Effect.ALLOW,
       })
     );
   }

@@ -30,7 +30,8 @@ const getDataOpenF1 = async (url: string) => {
 const getRaces = (sessions: ISessions) => {
   const races = sessions.filter(
     (session: ISession) =>
-      session.session_name.toLowerCase() === 'race' && session.year === 2024
+      session.session_name.toLowerCase() === 'race' &&
+      session.year === currentYear
   );
 
   return races;
@@ -38,7 +39,7 @@ const getRaces = (sessions: ISessions) => {
 
 const createMachines = async (races: any) => {
   const results = [];
-  const allRaces = await getRaceFromDynamoDB(2024);
+  const allRaces = await getRaceFromDynamoDB(currentYear);
 
   for (const race of races) {
     const session_key = race.session_key;
@@ -48,56 +49,53 @@ const createMachines = async (races: any) => {
         (item) => item.session_key === session_key
       );
 
+      let params = {
+        stateMachineArn: process.env.STATE_MACHINE_ARN,
+        name: `Session-${currentYear}-${session_key}`,
+        input: JSON.stringify({
+          session_key: session_key,
+          match_start: race.date_start,
+          waitTime1: calculateWaitTimes(race.date_start, true),
+          waitTime2: calculateWaitTimes(race.date_end, false),
+        }),
+      };
+
       if (existingRace) {
-        console.log(`Step Function ya existe para la carrera: ${session_key}`);
-        results.push({ session_key: session_key, status: 'exists' });
+        console.log('existingRace', existingRace);
+
+        if (existingRace.date !== race.date_start) {
+          const stopReason = 'Update race_start';
+          params.name += '-';
+
+          const stopExecution = await stepfunctions
+            .stopExecution({
+              executionArn: existingRace.step_function_arn,
+              cause: stopReason,
+            })
+            .promise();
+
+          console.log('stopExecution:', stopExecution);
+          const data = await stepfunctions.startExecution(params).promise();
+
+          return console.log(`Nueva maquina para la carrera ${session_key}.`);
+        } else {
+          console.log(
+            `Step Function ya existe para la carrera: ${session_key}`
+          );
+          results.push({ session_key: session_key, status: 'exists' });
+        }
       } else {
         console.log('Dont existingRace');
 
-        if (session_key === 9531) {
-          const params = {
-            stateMachineArn: process.env.STATE_MACHINE_ARN,
-            name: `Uru-${currentYear}-${session_key}`,
-            input: JSON.stringify({
-              session_key: session_key,
-              match_start: '2025-01-24T20:00:00+00:00',
-              waitTime1: calculateWaitTimes('2025-01-24T20:00:00+00:00', true),
-              waitTime2: calculateWaitTimes('2025-01-24T20:00:00+00:00', false),
-            }),
-          };
+        // Disparar la ejecución de la Step Function
+        const data = await stepfunctions.startExecution(params).promise();
+        console.log('Ejecución de Step Function iniciada:', data);
 
-          // Disparar la ejecución de la Step Function
-          const data = await stepfunctions.startExecution(params).promise();
-          console.log('Ejecución de Step Function iniciada:', data);
+        // Registrar en DynamoDB
+        await saveRaceToDynamoDB(session_key, data.executionArn, race);
 
-          // Registrar en DynamoDB
-          await saveRaceToDynamoDB(session_key, data.executionArn, race);
-
-          console.log(`Step Function creada para la carrera: ${session_key}`);
-          results.push({ session_key: session_key, status: 'created' });
-          return;
-        }
-
-        // const params = {
-        //   stateMachineArn: process.env.STATE_MACHINE_ARN,
-        //   name: `Test-${currentYear}-${session_key}`,
-        //   input: JSON.stringify({
-        //     session_key: session_key,
-        //     match_start: race.date_start,
-        //     waitTime1: calculateWaitTimes(race.date_start, true),
-        //     waitTime2: calculateWaitTimes(race.date_end, false),
-        //   }),
-        // };
-
-        // // Disparar la ejecución de la Step Function
-        // const data = await stepfunctions.startExecution(params).promise();
-        // console.log('Ejecución de Step Function iniciada:', data);
-
-        // // Registrar en DynamoDB
-        // await saveRaceToDynamoDB(session_key, data.executionArn, race);
-
-        // console.log(`Step Function creada para la carrera: ${session_key}`);
-        // results.push({ session_key: session_key, status: 'created' });
+        console.log(`Step Function creada para la carrera: ${session_key}`);
+        results.push({ session_key: session_key, status: 'created' });
       }
     } catch (error) {
       console.error(`Error procesando la carrera ${session_key}:`, error);

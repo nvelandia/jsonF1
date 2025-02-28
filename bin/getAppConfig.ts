@@ -22,6 +22,7 @@ export function getAppConfig(): AppConfig {
     apiSessions: process.env.API_SESSIONS!,
     bucketName: process.env.BUCKET_NAME!,
     stateMachineArn: process.env.STATE_MACHINE_ARN!,
+    tableName: process.env.TABLE_NAME!,
   };
 
   // Validate that all required environment variables are defined
