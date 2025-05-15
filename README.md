@@ -13,3 +13,7 @@ Usamos la api [OpenF1](https://openf1.org/#api-methods)
 ## 📌 A tener en cuenta
 
 Guarda el resultado en un json que sube a s3, luego actualiza min a min.
+
+## Diagrama
+
+![F1](JsonF1.png)
