@@ -1,14 +1,15 @@
-# Welcome to your CDK TypeScript project
+# F1
 
-This is a blank project for CDK development with TypeScript.
+Proyecto para la visualizacion de las posiciones en tiempo real de cada carrera de F1.
 
-The `cdk.json` file tells the CDK Toolkit how to execute your app.
+Usamos la api [OpenF1](https://openf1.org/#api-methods)
 
-## Useful commands
+## Lambdas
 
-* `npm run build`   compile typescript to js
-* `npm run watch`   watch for changes and compile
-* `npm run test`    perform the jest unit tests
-* `npx cdk deploy`  deploy this stack to your default AWS account/region
-* `npx cdk diff`    compare deployed stack with current state
-* `npx cdk synth`   emits the synthesized CloudFormation template
+- [`getRacesF1.ts`](./lib/lambdas/getRacesF1.ts) Se dispara todos los días, el dia de la carrera, crea una step function.
+- [`controlLambda.ts`](./lib/lambdas/controlLambda.ts) Activa y desactiva cloudwatch(cada minuto) usado durante la carrera.
+- [`getDataOpenF1.ts`](./lib/lambdas/getDataOpenF1.ts) Obtiene posiciones, hace merge con drivers y devuelve el top20 min a min.
+
+## 📌 A tener en cuenta
+
+Guarda el resultado en un json que sube a s3, luego actualiza min a min.

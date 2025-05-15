@@ -23,14 +23,14 @@ export class f1Stack extends cdk.Stack {
         type: dynamodb.AttributeType.NUMBER,
       },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: cdk.RemovalPolicy.DESTROY, // Solo para entornos de desarrollo
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
     // Lambdas ---------------------------
-
     const getRacesF1 = new NodejsFunction(this, 'getRacesF1', {
       functionName: 'f1-getRacesF1',
-      runtime: Runtime.NODEJS_18_X,
+      runtime: Runtime.NODEJS_LATEST,
+      timeout: cdk.Duration.seconds(30),
       handler: 'handler',
       entry: path.join(__dirname, '..', 'lambdas/getRacesF1.ts'),
       environment: {
@@ -44,10 +44,10 @@ export class f1Stack extends cdk.Stack {
 
     const mamF1 = new NodejsFunction(this, 'getDataOpenF1', {
       functionName: 'f1-mamF1',
-      runtime: Runtime.NODEJS_18_X,
+      runtime: Runtime.NODEJS_LATEST,
       handler: 'handler',
       entry: path.join(__dirname, '..', 'lambdas/getDataOpenF1.ts'),
-      timeout: cdk.Duration.minutes(10),
+      timeout: cdk.Duration.seconds(30),
       environment: {
         API_DRIVERS: process.env.API_DRIVERS || '',
         API_POSITION: process.env.API_POSITION || '',
@@ -57,9 +57,8 @@ export class f1Stack extends cdk.Stack {
     });
 
     // Cloudwatch ---------------------------
-
     const cronRaces = new events.Rule(this, 'CloudWatchEveryDayRule', {
-      schedule: events.Schedule.rate(cdk.Duration.days(7)),
+      schedule: events.Schedule.expression('cron(0 */3 * * ? *)'),
     });
     cronRaces.addTarget(new targets.LambdaFunction(getRacesF1));
 
@@ -80,7 +79,8 @@ export class f1Stack extends cdk.Stack {
 
     const controlLambda = new NodejsFunction(this, 'ControlLambda', {
       functionName: 'f1-controlLambda',
-      runtime: Runtime.NODEJS_18_X,
+      runtime: Runtime.NODEJS_LATEST,
+      timeout: cdk.Duration.seconds(30),
       handler: 'handler',
       entry: path.join(__dirname, '..', 'lambdas/controlLambda.ts'),
       environment: {
@@ -88,7 +88,6 @@ export class f1Stack extends cdk.Stack {
       },
     });
 
-    // Agrega la política a la función Lambda
     controlLambda.addToRolePolicy(cloudwatchPolicy);
 
     // Step Functions ----------
@@ -164,15 +163,3 @@ export class f1Stack extends cdk.Stack {
     );
   }
 }
-
-// Cron cloudwatch cada 48 horas / 7 dias
-
-// Lambda sessions
-
-// Crea el step function de cada carrera y registra en Dynamo.
-// Step function se dispará el dia de la qualifying/sprint/race
-// el step fucntion en el dia de la carrera se activa una hora antes y dispara el cron cloudwatch cada 1 min
-// se apaga una hora despues de la hora de finalizado
-
-// step fuction de cada minuto dispara la lambda getDataOpen con las posiciones
-// las guarda en un json en un S3

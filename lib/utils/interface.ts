@@ -33,10 +33,17 @@ export interface ISession {
   circuit_short_name: string;
   session_type: string;
   session_name: string;
-  date_start: Date;
-  date_end: Date;
+  date_start: string;
+  date_end: string;
   gmt_offset: string;
   session_key: number;
   meeting_key: number;
   year: number;
+}
+
+export interface iParams {
+  session_key: number;
+  match_start: any;
+  waitTime1: string;
+  waitTime2: string;
 }
