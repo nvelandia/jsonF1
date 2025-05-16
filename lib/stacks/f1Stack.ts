@@ -57,8 +57,8 @@ export class f1Stack extends cdk.Stack {
     });
 
     // Cloudwatch ---------------------------
-    const cronRaces = new events.Rule(this, 'CloudWatchEveryDayRule', {
-      schedule: events.Schedule.expression('cron(0 */3 * * ? *)'),
+    const cronRaces = new events.Rule(this, 'CloudWatchDailyAt3AMRule', {
+      schedule: events.Schedule.expression('cron(0 3 * * ? *)'),
     });
     cronRaces.addTarget(new targets.LambdaFunction(getRacesF1));
 
